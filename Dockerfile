@@ -1,6 +1,6 @@
 FROM ubuntu:22.04
 
-# Combine RUN commands to reduce layers and image size
+# Install packages
 RUN apt-get -y update && apt-get -y upgrade \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     sudo \
@@ -39,39 +39,33 @@ RUN wget -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux
 RUN mkdir -p /run/sshd \
     && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
     && echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config \
-    && echo root:choco|chpasswd
+    && echo root:choco | chpasswd
 
-# Create a startup script with proper error handling
+# Ensure root user has a proper shell
+RUN sed -i 's|^root:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:.*|root:x:0:0:root:/root:/bin/bash|' /etc/passwd
+
+# Create a startup script
 RUN echo '#!/bin/bash' > /start \
     && echo 'set -e' >> /start \
-    && echo 'echo "Starting services..."' >> /start \
+    && echo 'echo "[start] Starting SSH daemon..."' >> /start \
+    && echo '/usr/sbin/sshd' >> /start \
     && echo '' >> /start \
-    && echo '# Start SSH daemon' >> /start \
-    && echo '/usr/sbin/sshd || { echo "Failed to start SSH daemon"; exit 1; }' >> /start \
-    && echo '' >> /start \
-    && echo '# Configure and start ngrok if token is provided' >> /start \
     && echo 'if [ -n "$NGROK_TOKEN" ]; then' >> /start \
-    && echo '    echo "Configuring ngrok..."' >> /start \
-    && echo '    ./ngrok config add-authtoken ${NGROK_TOKEN}' >> /start \
-    && echo '    ./ngrok tcp 22 &>/dev/null &' >> /start \
-    && echo '    echo "ngrok started successfully"' >> /start \
-    && echo 'else' >> /start \
-    && echo '    echo "NGROK_TOKEN not provided, skipping ngrok setup"' >> /start \
+    && echo '  echo "[start] Adding ngrok authtoken..."' >> /start \
+    && echo '  ./ngrok config add-authtoken ${NGROK_TOKEN}' >> /start \
+    && echo '  echo "[start] Starting ngrok tunnel for port 22..."' >> /start \
+    && echo '  ./ngrok tcp 22 &>/var/log/ngrok.log &' >> /start \
     && echo 'fi' >> /start \
     && echo '' >> /start \
-    && echo '# Create a basic health check endpoint' >> /start \
-    && echo 'mkdir -p /tmp/www' >> /start \
-    && echo 'echo "<!DOCTYPE html><html><body><h1>Service is running</h1></body></html>" > /tmp/www/index.html' >> /start \
-    && echo '' >> /start \
-    && echo '# Start HTTP server' >> /start \
-    && echo 'echo "Starting HTTP server on port ${PORT}..."' >> /start \
-    && echo 'cd /tmp/www && python3 -m http.server ${PORT:-8000} --bind 0.0.0.0' >> /start \
-    && chmod 755 /start
+    && echo 'echo "[start] Starting HTTP server on port ${PORT}..."' >> /start \
+    && echo 'python3 -m http.server ${PORT:-8000} --bind 0.0.0.0' >> /start
 
-# Expose necessary ports
+RUN chmod 755 /start
+
+# Expose necessary ports (most only needed for your app, but SSH and HTTP always)
 EXPOSE 22 80 443 3306 5130 5131 5132 5133 5134 5135 8080 8888 8000
 
-# Healthcheck
+# Healthcheck (optional, but helpful)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT:-8000} || exit 1
 
